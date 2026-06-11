@@ -6,7 +6,7 @@ Keeping the notebook in a builder script means it never drifts from the
 import os
 import nbformat as nbf
 
-REPO_URL = "https://github.com/YOUR_USERNAME/medical-qlora-finetune.git"
+REPO_URL = "https://github.com/TheRedCan/medical-qlora-finetune.git"
 
 nb = nbf.v4.new_notebook()
 md = nbf.v4.new_markdown_cell
