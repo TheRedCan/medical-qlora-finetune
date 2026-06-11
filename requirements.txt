@@ -1,0 +1,14 @@
+# Core training stack for QLoRA fine-tuning.
+# Versions are lower-bounds known to work together (early 2026). On Google
+# Colab, torch is pre-installed with CUDA — do NOT pin torch here.
+transformers>=4.45,<5.0
+peft>=0.13
+bitsandbytes>=0.43
+accelerate>=0.34
+datasets>=3.0
+sentencepiece>=0.2          # tokenizer for Mistral/Llama
+protobuf>=3.20
+
+# Evaluation / dev
+pytest>=8.0
+huggingface_hub>=0.25

@@ -1,0 +1,199 @@
+"""QLoRA fine-tuning of a small instruct LLM on MedQA.
+
+Run as a script (CLI) or import `train()` from a notebook:
+
+    python -m src.train
+
+Key techniques demonstrated:
+  * 4-bit NF4 quantization (QLoRA) via bitsandbytes
+  * LoRA adapters via PEFT
+  * **prompt-token masking** so the loss is computed only on the answer,
+    not on the question (cleaner signal than training on the full text)
+"""
+from __future__ import annotations
+
+import os
+from typing import Dict, List
+
+from .config import Config, CONFIG
+from .data import build_messages, load_medqa
+
+
+def _compute_dtype():
+    """Pick bf16 on Ampere+ (e.g. A100), fp16 on Turing (e.g. Colab T4)."""
+    import torch
+
+    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
+def load_tokenizer(config: Config):
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(config.base_model, use_fast=True)
+    if tok.pad_token is None:
+        # Causal LMs often lack a pad token; reuse EOS for padding.
+        tok.pad_token = tok.eos_token
+    tok.padding_side = "right"
+    return tok
+
+
+def load_base_model(config: Config, for_training: bool = True):
+    """Load the base model in 4-bit. Used for both training and the
+    'before' evaluation, so eval and train see identical quantization."""
+    import torch
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=_compute_dtype(),
+        bnb_4bit_use_double_quant=True,
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        config.base_model,
+        quantization_config=bnb_config,
+        device_map="auto",
+        torch_dtype=_compute_dtype(),
+    )
+    model.config.use_cache = not for_training  # cache off while training
+    return model
+
+
+def tokenize_with_masking(example: Dict, tokenizer, config: Config) -> Dict:
+    """Build input_ids + labels where prompt tokens are masked to -100.
+
+    We render the prompt (system+user, with the generation prefix) and the
+    full conversation (prompt + gold answer) using the tokenizer's chat
+    template, then mask everything up to the answer so loss is computed on
+    the completion only.
+    """
+    prompt_messages = build_messages(example, include_answer=False)
+    full_messages = build_messages(example, include_answer=True)
+
+    prompt_ids = tokenizer.apply_chat_template(
+        prompt_messages, tokenize=True, add_generation_prompt=True
+    )
+    full_ids = tokenizer.apply_chat_template(
+        full_messages, tokenize=True, add_generation_prompt=False
+    )
+
+    # Append EOS so the model learns to stop.
+    if tokenizer.eos_token_id is not None and full_ids[-1] != tokenizer.eos_token_id:
+        full_ids = full_ids + [tokenizer.eos_token_id]
+
+    full_ids = full_ids[: config.max_seq_length]
+    labels = list(full_ids)
+    prompt_len = min(len(prompt_ids), len(full_ids))
+    for i in range(prompt_len):
+        labels[i] = -100  # mask the prompt
+
+    attention_mask = [1] * len(full_ids)
+    return {"input_ids": full_ids, "attention_mask": attention_mask, "labels": labels}
+
+
+class CausalDataCollator:
+    """Pad input_ids/attention_mask/labels to the longest item in a batch.
+    Labels are padded with -100 so padding never contributes to the loss."""
+
+    def __init__(self, tokenizer):
+        self.pad_id = tokenizer.pad_token_id
+
+    def __call__(self, features: List[Dict]) -> Dict:
+        import torch
+
+        max_len = max(len(f["input_ids"]) for f in features)
+        batch = {"input_ids": [], "attention_mask": [], "labels": []}
+        for f in features:
+            pad = max_len - len(f["input_ids"])
+            batch["input_ids"].append(f["input_ids"] + [self.pad_id] * pad)
+            batch["attention_mask"].append(f["attention_mask"] + [0] * pad)
+            batch["labels"].append(f["labels"] + [-100] * pad)
+        return {k: torch.tensor(v, dtype=torch.long) for k, v in batch.items()}
+
+
+def build_lora_model(model, config: Config):
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    lora_config = LoraConfig(
+        r=config.lora_r,
+        lora_alpha=config.lora_alpha,
+        lora_dropout=config.lora_dropout,
+        target_modules=config.target_modules,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+    return model
+
+
+def _subset(dataset, n: int):
+    if n and n > 0 and n < len(dataset):
+        return dataset.select(range(n))
+    return dataset
+
+
+def train(config: Config = CONFIG):
+    from transformers import Trainer, TrainingArguments
+
+    tokenizer = load_tokenizer(config)
+
+    print("Loading + normalizing MedQA ...")
+    ds = load_medqa(config)
+    train_ds = _subset(ds["train"], config.max_train_samples)
+
+    print(f"Tokenizing {len(train_ds)} training examples (prompt-masked) ...")
+    tokenized = train_ds.map(
+        lambda ex: tokenize_with_masking(ex, tokenizer, config),
+        remove_columns=train_ds.column_names,
+        desc="tokenizing",
+    )
+
+    print("Loading base model in 4-bit + attaching LoRA ...")
+    model = load_base_model(config, for_training=True)
+    model = build_lora_model(model, config)
+
+    import torch
+
+    args = TrainingArguments(
+        output_dir=config.output_dir,
+        num_train_epochs=config.num_train_epochs,
+        per_device_train_batch_size=config.per_device_train_batch_size,
+        gradient_accumulation_steps=config.gradient_accumulation_steps,
+        learning_rate=config.learning_rate,
+        warmup_ratio=config.warmup_ratio,
+        weight_decay=config.weight_decay,
+        logging_steps=config.logging_steps,
+        save_steps=config.save_steps,
+        save_total_limit=2,
+        lr_scheduler_type="cosine",
+        optim="paged_adamw_8bit",  # memory-friendly optimizer (QLoRA)
+        bf16=_compute_dtype() == torch.bfloat16,
+        fp16=_compute_dtype() == torch.float16,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        report_to="none",
+        seed=config.seed,
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=args,
+        train_dataset=tokenized,
+        data_collator=CausalDataCollator(tokenizer),
+    )
+
+    trainer.train()
+
+    adapter_dir = os.path.join(config.output_dir, "adapter")
+    trainer.model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
+    print(f"\nLoRA adapter saved to: {adapter_dir}")
+    return adapter_dir
+
+
+if __name__ == "__main__":
+    train()

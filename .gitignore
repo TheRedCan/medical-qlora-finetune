@@ -1,0 +1,26 @@
+# Training artifacts
+outputs/
+*.safetensors
+*.bin
+checkpoint-*/
+wandb/
+
+# Data caches
+data/cache/
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# HF / secrets
+.env
+hf_token.txt
+
+# OS / editor
+.DS_Store
+.ipynb_checkpoints/
