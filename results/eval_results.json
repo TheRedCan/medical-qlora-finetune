@@ -1,0 +1,15 @@
+{
+  "base_model": "Qwen/Qwen2.5-3B-Instruct",
+  "dataset": "GBaker/MedQA-USMLE-4-options",
+  "n_eval": 300,
+  "base_accuracy": 0.4767,
+  "base_parse_rate": 1.0,
+  "finetuned_accuracy": 0.5033,
+  "finetuned_parse_rate": 1.0,
+  "absolute_improvement": 0.0267,
+  "train_samples": 4000,
+  "num_train_epochs": 1,
+  "decoding": "greedy (deterministic)",
+  "hardware": "Kaggle T4 (single GPU)",
+  "method": "QLoRA (4-bit NF4) + LoRA r=16 alpha=32, prompt-masked loss"
+}

@@ -27,15 +27,22 @@ relies on:
 
 ## Results
 
-> Fill these in after your run — `src/evaluate.py` prints them and writes
-> `outputs/eval_results.json`.
+QLoRA fine-tune of **Qwen2.5-3B-Instruct** on 4,000 MedQA training examples
+(1 epoch), evaluated on a 300-question held-out test sample with greedy
+(deterministic) decoding. Run on a single Kaggle T4. Full metrics in
+[`results/eval_results.json`](results/eval_results.json).
 
 | Model | MedQA test accuracy | Δ vs base |
 |-------|--------------------:|----------:|
-| Mistral-7B-Instruct (base, 4-bit) | _e.g. 0.41_ | — |
-| **+ QLoRA fine-tune (this repo)** | _e.g. 0.49_ | **_+8.0 pp_** |
+| Qwen2.5-3B-Instruct (base, 4-bit) | 47.67% | — |
+| **+ QLoRA fine-tune (this repo)** | **50.33%** | **+2.67 pp** |
 
-*Evaluated on a 300-question held-out MedQA test sample with greedy decoding.*
+**Parse rate: 1.00 for both** — every generation yielded a parseable answer
+letter, so the accuracy delta reflects genuine answer quality, not formatting
+luck. A few points from one epoch of QLoRA is the realistic, honest outcome on
+USMLE-level questions; the point of the project is the *methodology* (see below),
+and the harness scales straight to more epochs / the full train split / a larger
+base model for a bigger gain.
 
 ---
 
