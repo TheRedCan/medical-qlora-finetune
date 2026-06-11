@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data import (  # noqa: E402
     LETTERS,
+    apply_chat_template,
     build_messages,
     build_question_block,
     build_target,
@@ -129,3 +130,46 @@ def test_merge_system_into_user_does_not_mutate_input():
     msgs = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "Q"}]
     merge_system_into_user(msgs)
     assert msgs[0]["role"] == "system"  # original list untouched
+
+
+# ---- apply_chat_template output normalization (transformers drift) ----
+
+class _StubTokenizer:
+    """Mimics apply_chat_template, returning a configurable shape so we can
+    verify normalization without downloading a real tokenizer."""
+
+    def __init__(self, mode):
+        self.mode = mode
+
+    def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+        if not tokenize:
+            return "RENDERED_PROMPT"
+        ids = [1, 2, 3]
+        if self.mode == "list":
+            return ids
+        if self.mode == "batched":
+            return [ids]
+        if self.mode == "dict":
+            return {"input_ids": ids, "attention_mask": [1, 1, 1]}
+        if self.mode == "batchencoding":
+            class BE:
+                input_ids = ids
+            return BE()
+        raise AssertionError(self.mode)
+
+
+@pytest.mark.parametrize("mode", ["list", "batched", "dict", "batchencoding"])
+def test_apply_chat_template_normalizes_to_flat_list(mode):
+    tok = _StubTokenizer(mode)
+    out = apply_chat_template(tok, [{"role": "user", "content": "Q"}],
+                              tokenize=True, add_generation_prompt=True)
+    assert out == [1, 2, 3]
+    # critically, it must support list concatenation (the bug we hit)
+    assert out + [99] == [1, 2, 3, 99]
+
+
+def test_apply_chat_template_passes_string_through_when_not_tokenizing():
+    tok = _StubTokenizer("list")
+    out = apply_chat_template(tok, [{"role": "user", "content": "Q"}],
+                              tokenize=False, add_generation_prompt=True)
+    assert out == "RENDERED_PROMPT"

@@ -121,17 +121,41 @@ def merge_system_into_user(messages: List[Dict[str, str]]) -> List[Dict[str, str
 def apply_chat_template(tokenizer, messages, tokenize: bool, add_generation_prompt: bool):
     """Apply the tokenizer's chat template, retrying without a system role
     if the template rejects one. Centralizes template handling so train,
-    eval, and inference all behave identically across model families."""
+    eval, and inference all behave identically across model families.
+
+    When ``tokenize=True`` the result is normalized to a flat ``list[int]``:
+    some transformers versions return a ``BatchEncoding``/dict (or a batched
+    ``[[...]]``) here, which would break downstream list operations."""
     try:
-        return tokenizer.apply_chat_template(
+        out = tokenizer.apply_chat_template(
             messages, tokenize=tokenize, add_generation_prompt=add_generation_prompt
         )
     except Exception:
-        return tokenizer.apply_chat_template(
+        out = tokenizer.apply_chat_template(
             merge_system_into_user(messages),
             tokenize=tokenize,
             add_generation_prompt=add_generation_prompt,
         )
+    if tokenize:
+        return _to_token_id_list(out)
+    return out
+
+
+def _to_token_id_list(out) -> List[int]:
+    """Coerce assorted apply_chat_template(tokenize=True) return shapes into a
+    flat list of token ids: list[int], BatchEncoding/dict, or batched [[...]]."""
+    # dict / BatchEncoding -> pull input_ids
+    if hasattr(out, "input_ids"):
+        out = out.input_ids
+    elif isinstance(out, dict) and "input_ids" in out:
+        out = out["input_ids"]
+    # tensors / arrays -> python list
+    if hasattr(out, "tolist"):
+        out = out.tolist()
+    # un-batch a single [[...]] sequence
+    if out and isinstance(out, list) and isinstance(out[0], list):
+        out = out[0]
+    return list(out)
 
 
 _LETTER_RE = re.compile(r"\(?\s*([A-E])\s*\)?", re.IGNORECASE)
