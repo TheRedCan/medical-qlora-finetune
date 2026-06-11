@@ -1,5 +1,6 @@
 # Training artifacts
 outputs/
+kaggle/_run_output/
 *.safetensors
 *.bin
 checkpoint-*/
