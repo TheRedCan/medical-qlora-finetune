@@ -15,6 +15,7 @@ from src.data import (  # noqa: E402
     build_question_block,
     build_target,
     extract_answer_letter,
+    merge_system_into_user,
     normalize_example,
 )
 
@@ -102,3 +103,29 @@ def test_extract_prefers_explicit_answer_phrase_over_stray_letter():
 
 def test_letters_constant():
     assert LETTERS[:4] == ["A", "B", "C", "D"]
+
+
+# ---- system-message merging (Mistral compatibility) -------------------
+
+def test_merge_system_into_user_folds_into_following_user():
+    msgs = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "Q"},
+        {"role": "assistant", "content": "A"},
+    ]
+    merged = merge_system_into_user(msgs)
+    assert all(m["role"] != "system" for m in merged)
+    assert merged[0]["role"] == "user"
+    assert merged[0]["content"] == "SYS\n\nQ"
+    assert merged[1] == {"role": "assistant", "content": "A"}
+
+
+def test_merge_system_into_user_noop_without_system():
+    msgs = [{"role": "user", "content": "Q"}]
+    assert merge_system_into_user(msgs) == msgs
+
+
+def test_merge_system_into_user_does_not_mutate_input():
+    msgs = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "Q"}]
+    merge_system_into_user(msgs)
+    assert msgs[0]["role"] == "system"  # original list untouched

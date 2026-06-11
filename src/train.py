@@ -16,7 +16,7 @@ import os
 from typing import Dict, List
 
 from .config import Config, CONFIG
-from .data import build_messages, load_medqa
+from .data import apply_chat_template, build_messages, load_medqa
 
 
 def _compute_dtype():
@@ -72,11 +72,11 @@ def tokenize_with_masking(example: Dict, tokenizer, config: Config) -> Dict:
     prompt_messages = build_messages(example, include_answer=False)
     full_messages = build_messages(example, include_answer=True)
 
-    prompt_ids = tokenizer.apply_chat_template(
-        prompt_messages, tokenize=True, add_generation_prompt=True
+    prompt_ids = apply_chat_template(
+        tokenizer, prompt_messages, tokenize=True, add_generation_prompt=True
     )
-    full_ids = tokenizer.apply_chat_template(
-        full_messages, tokenize=True, add_generation_prompt=False
+    full_ids = apply_chat_template(
+        tokenizer, full_messages, tokenize=True, add_generation_prompt=False
     )
 
     # Append EOS so the model learns to stop.

@@ -11,7 +11,7 @@ import argparse
 from typing import Dict, Optional
 
 from .config import Config, CONFIG
-from .data import SYSTEM_PROMPT, build_question_block, extract_answer_letter
+from .data import SYSTEM_PROMPT, apply_chat_template, build_question_block, extract_answer_letter
 from .train import load_tokenizer
 
 
@@ -33,7 +33,7 @@ def answer_question(model, tokenizer, question: str, options: Dict[str, str], co
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_question_block(question, options)},
     ]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt = apply_chat_template(tokenizer, messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
         out = model.generate(

@@ -95,6 +95,45 @@ def build_messages(example: Dict, include_answer: bool) -> List[Dict[str, str]]:
     return messages
 
 
+def merge_system_into_user(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Fold any system message into the following user turn.
+
+    Some chat templates (notably Mistral-7B-Instruct) reject a ``system``
+    role. This produces an equivalent message list without one, so the same
+    prompts work across Mistral / Llama / Qwen.
+    """
+    system_txt = ""
+    out: List[Dict[str, str]] = []
+    for m in messages:
+        if m["role"] == "system":
+            system_txt = m["content"]
+            continue
+        if m["role"] == "user" and system_txt:
+            out.append({"role": "user", "content": f"{system_txt}\n\n{m['content']}"})
+            system_txt = ""
+        else:
+            out.append(dict(m))
+    if system_txt:  # no user turn followed it; keep as a leading user message
+        out.insert(0, {"role": "user", "content": system_txt})
+    return out
+
+
+def apply_chat_template(tokenizer, messages, tokenize: bool, add_generation_prompt: bool):
+    """Apply the tokenizer's chat template, retrying without a system role
+    if the template rejects one. Centralizes template handling so train,
+    eval, and inference all behave identically across model families."""
+    try:
+        return tokenizer.apply_chat_template(
+            messages, tokenize=tokenize, add_generation_prompt=add_generation_prompt
+        )
+    except Exception:
+        return tokenizer.apply_chat_template(
+            merge_system_into_user(messages),
+            tokenize=tokenize,
+            add_generation_prompt=add_generation_prompt,
+        )
+
+
 _LETTER_RE = re.compile(r"\(?\s*([A-E])\s*\)?", re.IGNORECASE)
 
 

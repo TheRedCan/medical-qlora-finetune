@@ -14,7 +14,7 @@ import json
 from typing import Dict, List, Optional
 
 from .config import Config, CONFIG
-from .data import build_messages, extract_answer_letter, load_medqa
+from .data import apply_chat_template, build_messages, extract_answer_letter, load_medqa
 from .train import load_base_model, load_tokenizer, _subset
 
 
@@ -50,8 +50,8 @@ def evaluate_model(model, tokenizer, dataset, config: Config, batch_size: int = 
     for start in range(0, len(dataset), batch_size):
         batch = dataset.select(range(start, min(start + batch_size, len(dataset))))
         prompts = [
-            tokenizer.apply_chat_template(
-                build_messages(ex, include_answer=False),
+            apply_chat_template(
+                tokenizer, build_messages(ex, include_answer=False),
                 tokenize=False, add_generation_prompt=True,
             )
             for ex in batch
