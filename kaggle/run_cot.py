@@ -23,7 +23,7 @@ os.environ.setdefault("HF_DATASETS_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
-PILOT = os.environ.get("PILOT", "1") == "1"
+PILOT = os.environ.get("PILOT", "0") == "1"  # default FULL (pilot proved out)
 
 # --- config via env (read by src/config.py) ---------------------------
 os.environ["TASK"] = "extraction"
