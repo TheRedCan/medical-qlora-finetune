@@ -144,7 +144,7 @@ def evaluate_extraction(model, tokenizer, dataset, config) -> Dict:
 
     tokenizer.padding_side = "left"
     bs = config.eval_batch_size
-    counts, exacts, valids = [], [], []
+    counts, exacts, valids, preds = [], [], [], []
     for start in range(0, len(dataset), bs):
         batch = dataset.select(range(start, min(start + bs, len(dataset))))
         prompts = [build_extraction_prompt(ex, include_answer=False) for ex in batch]
@@ -155,10 +155,19 @@ def evaluate_extraction(model, tokenizer, dataset, config) -> Dict:
             counts.append((sc["tp"], sc["fp"], sc["fn"]))
             exacts.append(sc["exact"])
             valids.append(valid)
+            preds.append(pred)
         f1 = _f1(counts)
         print(f"  {len(counts)}/{len(dataset)} micro-F1={f1:.3f}", end="\r")
     print()
-    return {"counts": counts, "exact_flags": exacts, "json_valid_rate": sum(valids) / len(valids)}
+    return {"counts": counts, "exact_flags": exacts,
+            "json_valid_rate": sum(valids) / len(valids), "preds": preds}
+
+
+def micro_f1_on(model, tokenizer, dataset, config) -> float:
+    """Convenience: micro-F1 of a single model on a dataset (used for the
+    train-vs-test generalization-gap overfitting check)."""
+    from .stats import micro_f1
+    return micro_f1(evaluate_extraction(model, tokenizer, dataset, config)["counts"])
 
 
 def _f1(counts) -> float:
@@ -185,8 +194,17 @@ def paired_compare_extraction(adapter_dir: str, dataset, config, tokenizer=None)
 
     boot = bootstrap_f1_diff(base["counts"], ft["counts"])
     exact = mcnemar(base["exact_flags"], ft["exact_flags"])
+
+    # qualitative examples for eyeballing (text / gold / base / fine-tuned)
+    n_ex = min(15, len(dataset))
+    examples = [
+        {"text": dataset[i]["text"], "gold": dataset[i]["diseases"],
+         "base_pred": base["preds"][i], "finetuned_pred": ft["preds"][i]}
+        for i in range(n_ex)
+    ]
     return {
         "n": len(dataset),
+        "examples": examples,
         "base_micro_f1": boot["f1_base"],
         "finetuned_micro_f1": boot["f1_ft"],
         "f1_significance": boot,

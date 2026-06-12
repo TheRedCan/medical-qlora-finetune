@@ -76,6 +76,23 @@ test_ds = _subset(ner["test"], cfg.max_eval_samples)
 res = extraction.paired_compare_extraction(adapter_dir, test_ds, cfg, tokenizer=tokenizer)
 extraction.print_summary("Disease extraction (held-out test)", res)
 
+# --- validation: train-vs-test generalization gap (overfitting check) -
+# Sample from the *same* shuffled order the trainer used, so these rows were
+# genuinely trained on. A small (train F1 - test F1) gap = healthy
+# generalization; a large gap = memorization/overfitting.
+print("\n===== VALIDATION: train-vs-test F1 gap (overfitting check) =====", flush=True)
+from src.evaluate import load_finetuned_for_eval, _free  # noqa: E402
+train_seen = _subset(ner["train"].shuffle(seed=cfg.seed), 600)
+ft_model = load_finetuned_for_eval(adapter_dir, cfg)
+train_f1 = extraction.micro_f1_on(ft_model, tokenizer, train_seen, cfg)
+_free(ft_model)
+test_f1 = res["finetuned_micro_f1"]
+gen_gap = round(train_f1 - test_f1, 4)
+print(f"  fine-tuned F1 on trained-on examples : {train_f1:.4f}")
+print(f"  fine-tuned F1 on held-out test       : {test_f1:.4f}")
+print(f"  generalization gap (train - test)    : {gen_gap:+.4f}  "
+      f"({'healthy' if gen_gap < 0.1 else 'possible overfitting'})")
+
 # --- persist -----------------------------------------------------------
 summary = {
     "mode": "pilot" if PILOT else "full",
@@ -85,6 +102,11 @@ summary = {
     "train_samples": cfg.max_train_samples,
     "num_train_epochs": cfg.num_train_epochs,
     "result": res,
+    "overfitting_check": {
+        "finetuned_train_f1": round(train_f1, 4),
+        "finetuned_test_f1": test_f1,
+        "generalization_gap": gen_gap,
+    },
 }
 out_path = os.path.join(WORK, "eval_results_cot.json")
 with open(out_path, "w") as f:
