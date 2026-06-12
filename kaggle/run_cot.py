@@ -19,6 +19,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 os.environ.setdefault("HF_DATASETS_DISABLE_PROGRESS_BARS", "1")
+# Reduce allocator fragmentation (suggested by the OOM error) and pin to a
+# single T4 so device_map doesn't imbalance activations across 2 GPUs.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
 PILOT = os.environ.get("PILOT", "1") == "1"
 
@@ -26,19 +30,20 @@ PILOT = os.environ.get("PILOT", "1") == "1"
 os.environ.setdefault("BASE_MODEL", "Qwen/Qwen2.5-3B-Instruct")
 os.environ["USE_COT"] = "1"
 os.environ["DATASET_NAME"] = "openlifescienceai/medmcqa"
-os.environ["EVAL_IN_FP16"] = "1"
-os.environ["GRAD_CHECKPOINT"] = "0"
+os.environ["EVAL_IN_FP16"] = "1"          # fast eval (big win, separate phase)
+os.environ["GRAD_CHECKPOINT"] = "1"       # memory-safe training (proven config)
+os.environ["MAX_SEQ_LENGTH"] = "768"      # MedMCQA CoT fits; faster than 1024
 os.environ["EVAL_BATCH_SIZE"] = "16"
-os.environ["MAX_NEW_TOKENS"] = "256"
+os.environ["MAX_NEW_TOKENS"] = "200"
 os.environ["OUTPUT_DIR"] = os.path.join(WORK, "outputs", "medmcqa-cot-qlora")
 if PILOT:
-    os.environ["MAX_TRAIN_SAMPLES"] = "500"
-    os.environ["MAX_EVAL_SAMPLES"] = "200"
+    os.environ["MAX_TRAIN_SAMPLES"] = "400"
+    os.environ["MAX_EVAL_SAMPLES"] = "150"
     os.environ["NUM_TRAIN_EPOCHS"] = "1"
 else:
-    os.environ["MAX_TRAIN_SAMPLES"] = "8000"
+    os.environ["MAX_TRAIN_SAMPLES"] = "5000"
     os.environ["MAX_EVAL_SAMPLES"] = "1000"
-    os.environ["NUM_TRAIN_EPOCHS"] = "2"
+    os.environ["NUM_TRAIN_EPOCHS"] = "1"
 
 import torch  # noqa: E402
 print("MODE:", "PILOT" if PILOT else "FULL")
