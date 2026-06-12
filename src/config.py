@@ -34,6 +34,11 @@ class Config:
     #   BASE_MODEL=Qwen/Qwen2.5-3B-Instruct   (Apache-2.0, no gating)
     base_model: str = field(default_factory=lambda: _env("BASE_MODEL", "mistralai/Mistral-7B-Instruct-v0.3"))
 
+    # --- Task ------------------------------------------------------------
+    # "mcqa": multiple-choice QA. "extraction": clinical text -> JSON of
+    # disease mentions (a format/behavior task SFT reliably improves).
+    task: str = field(default_factory=lambda: _env("TASK", "mcqa"))
+
     # --- Dataset ---------------------------------------------------------
     # Training set. MedMCQA ships an `exp` rationale we turn into CoT targets.
     dataset_name: str = field(default_factory=lambda: _env("DATASET_NAME", "openlifescienceai/medmcqa"))

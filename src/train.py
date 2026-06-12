@@ -159,18 +159,21 @@ def train(config: Config = CONFIG):
 
     tokenizer = load_tokenizer(config)
 
-    style = "CoT" if config.use_cot else "direct"
-    print(f"Loading + normalizing training data ({config.dataset_name}, {style}) ...")
-    full_train = load_training_split(config)
-    full_train = full_train.shuffle(seed=config.seed)
-    train_ds = _subset(full_train, config.max_train_samples)
+    if config.task == "extraction":
+        from .extraction import load_ner, tokenize_extraction
+        print(f"Loading NER training data ({config.dataset_name}) ...")
+        full_train = load_ner(config.dataset_name)["train"].shuffle(seed=config.seed)
+        train_ds = _subset(full_train, config.max_train_samples)
+        tok_fn = lambda ex: tokenize_extraction(ex, tokenizer, config)  # noqa: E731
+    else:
+        style = "CoT" if config.use_cot else "direct"
+        print(f"Loading + normalizing training data ({config.dataset_name}, {style}) ...")
+        full_train = load_training_split(config).shuffle(seed=config.seed)
+        train_ds = _subset(full_train, config.max_train_samples)
+        tok_fn = lambda ex: tokenize_with_masking(ex, tokenizer, config)  # noqa: E731
 
     print(f"Tokenizing {len(train_ds)} training examples (prompt-masked) ...")
-    tokenized = train_ds.map(
-        lambda ex: tokenize_with_masking(ex, tokenizer, config),
-        remove_columns=train_ds.column_names,
-        desc="tokenizing",
-    )
+    tokenized = train_ds.map(tok_fn, remove_columns=train_ds.column_names, desc="tokenizing")
 
     print("Loading base model in 4-bit + attaching LoRA ...")
     model = load_base_model(config, for_training=True)

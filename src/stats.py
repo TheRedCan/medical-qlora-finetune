@@ -112,6 +112,53 @@ def paired_delta_ci(b: int, c: int, n: int, z: float = 1.96):
     return (delta - z * se, delta + z * se)
 
 
+def micro_f1(counts) -> float:
+    """Corpus micro-F1 from per-example (tp, fp, fn) triples."""
+    tp = sum(c[0] for c in counts)
+    fp = sum(c[1] for c in counts)
+    fn = sum(c[2] for c in counts)
+    denom = 2 * tp + fp + fn
+    return (2 * tp / denom) if denom else 0.0
+
+
+def bootstrap_f1_diff(base_counts, ft_counts, n_boot: int = 2000, seed: int = 0) -> dict:
+    """Paired bootstrap test for the micro-F1 difference (ft - base).
+
+    Resamples examples with replacement (paired: same indices for both
+    models) and recomputes the F1 gap, giving a 95% CI and a two-sided
+    p-value. ``*_counts`` are aligned lists of per-example (tp, fp, fn).
+    """
+    import random
+
+    if len(base_counts) != len(ft_counts):
+        raise ValueError("counts must be aligned and equal length")
+    n = len(base_counts)
+    f1_base, f1_ft = micro_f1(base_counts), micro_f1(ft_counts)
+    if n == 0:
+        return {"f1_base": 0.0, "f1_ft": 0.0, "f1_delta": 0.0,
+                "ci_low": 0.0, "ci_high": 0.0, "p_value": 1.0, "significant_05": False}
+
+    rng = random.Random(seed)
+    diffs = []
+    for _ in range(n_boot):
+        idx = [rng.randrange(n) for _ in range(n)]
+        bc = [base_counts[i] for i in idx]
+        fc = [ft_counts[i] for i in idx]
+        diffs.append(micro_f1(fc) - micro_f1(bc))
+    diffs.sort()
+    lo = diffs[int(0.025 * n_boot)]
+    hi = diffs[min(n_boot - 1, int(0.975 * n_boot))]
+    # two-sided p: how often the bootstrap crosses zero
+    p = 2.0 * min(sum(d <= 0 for d in diffs), sum(d >= 0 for d in diffs)) / n_boot
+    p = min(1.0, p)
+    return {
+        "f1_base": round(f1_base, 4), "f1_ft": round(f1_ft, 4),
+        "f1_delta": round(f1_ft - f1_base, 4),
+        "ci_low": round(lo, 4), "ci_high": round(hi, 4),
+        "p_value": round(p, 6), "significant_05": p < 0.05,
+    }
+
+
 def wilson_ci(k: int, n: int, z: float = 1.96):
     """Wilson score interval for a single proportion k/n (better than Wald
     for small n or extreme proportions)."""
