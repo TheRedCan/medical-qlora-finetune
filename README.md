@@ -1,138 +1,157 @@
-# Medical-Domain LLM Fine-Tuning with QLoRA
+# Fine-Tuning a Small LLM for Medical Structured Extraction (QLoRA)
 
-Fine-tune a small open-source instruct LLM (**Mistral-7B-Instruct**, swappable
-to Llama / Qwen) on **MedQA (USMLE)** medical multiple-choice questions using
-**QLoRA** (4-bit NF4 + LoRA adapters), then measure the improvement with a
-clean **exact-match accuracy** benchmark — base model vs. fine-tuned.
+Fine-tune a small open base model (**Qwen2.5-1.5B**) with **QLoRA** to turn
+free clinical text into **strict JSON** of disease mentions — and prove the
+gain is real with paired significance testing, a leakage check, and an
+overfitting diagnostic.
 
-> Built to run end-to-end on a **free Google Colab T4 (16 GB)**. The training
-> loop also runs locally on an 8 GB GPU if you switch to the 3B model.
+> **Headline result (1,500 held-out sentences):** entity **micro-F1 0.33 → 0.84**
+> (+0.51, 95% CI [+0.485, +0.537], p≈0). JSON-valid rate 0.96 → 1.00.
+> Exact-set match 0.21 → 0.82 (McNemar 955 vs 32, p≈0).
+
+```
+Input:  "...chronic severe heart failure secondary to dilated cardiomyopathy
+         with ventricular arrhythmias and QT prolongation..."
+Output: {"diseases": ["heart failure", "dilated cardiomyopathy",
+                       "ventricular arrhythmias", "QT prolongation", ...]}
+```
 
 ---
 
-## Why this project
+## What this project demonstrates
 
-It demonstrates the full applied-fine-tuning workflow that production LLM work
-relies on:
+Beyond "I can run QLoRA," it shows judgment about **when fine-tuning actually
+helps** — and the discipline to *measure* it honestly:
 
-| Skill | Where it shows up |
-|-------|-------------------|
-| **QLoRA / LoRA** | 4-bit NF4 quantization + low-rank adapters ([`src/train.py`](src/train.py)) |
-| **Data engineering** | Schema-normalizing a real HF dataset, chat-template formatting ([`src/data.py`](src/data.py)) |
-| **Correct loss masking** | Loss computed on the *answer only*, prompt tokens masked to `-100` |
-| **Rigorous evaluation** | Deterministic greedy decoding, before/after accuracy, parse-rate sanity check ([`src/evaluate.py`](src/evaluate.py)) |
-| **Reproducibility & testing** | Config-driven, seeded, GPU-free `pytest` suite for the core logic |
+| Skill | Where |
+|-------|-------|
+| **QLoRA / LoRA** | 4-bit NF4 base + LoRA adapters, prompt-masked loss ([`src/train.py`](src/train.py)) |
+| **Knowing what SFT can/can't do** | Pivoted from a *knowledge*-bound task (MCQA, where SFT failed) to a *behavior* task (extraction, where it wins) — see below |
+| **Rigorous evaluation** | Paired **McNemar** test + **bootstrap F1 CI** ([`src/stats.py`](src/stats.py)), not just point estimates |
+| **Validation against artifacts** | Train/test **leakage check**, **overfitting** diagnostic (train-vs-test F1 gap), qualitative review |
+| **Reproducibility & testing** | Config-driven, seeded, **62 GPU-free unit tests** for the core logic |
+
+---
+
+## The key insight (and an honest journey)
+
+I first tried the obvious thing — **fine-tune to improve medical multiple-choice
+accuracy** (MedMCQA / MedQA). Across **four** configurations (3B instruct, 3B
+base, 0.5B base; direct and chain-of-thought) QLoRA SFT was **neutral-to-slightly-negative**
+and never significant. That's not a bug — it's a real lesson:
+
+> **MCQA accuracy is *knowledge*-bound.** Modern small models already know the
+> answer format (parse rate ≈ 1.0), so SFT has nothing to teach there — and you
+> can't reliably *inject medical knowledge* into a small model with a few
+> thousand Q&A pairs. Fine-tuning is great at **format and behavior**, weak at
+> **facts.**
+
+So I pivoted to a task that plays to SFT's strength: **structured extraction.**
+A base (non-instruct) model can't reliably emit a strict JSON schema on command;
+fine-tuning teaches the *behavior*, and the gain is large, reliable, and
+significant. The negative MCQA results are kept as part of the story — knowing
+*why* an approach fails is the point.
 
 ---
 
 ## Results
 
-QLoRA fine-tune of **Qwen2.5-3B-Instruct** on 4,000 MedQA training examples
-(1 epoch), evaluated on a 300-question held-out test sample with greedy
-(deterministic) decoding. Run on a single Kaggle T4. Full metrics in
-[`results/eval_results.json`](results/eval_results.json).
+Qwen2.5-1.5B (base) + QLoRA, trained on 8k examples (2 epochs) of
+[`rjac/biobert-ner-diseases-dataset`](https://huggingface.co/datasets/rjac/biobert-ner-diseases-dataset),
+evaluated on 1,500 held-out test sentences. Both models use the **same**
+zero-shot prompt (fair comparison). Full metrics:
+[`results/extraction_results.json`](results/extraction_results.json).
 
-| Model | MedQA test accuracy | Δ vs base |
-|-------|--------------------:|----------:|
-| Qwen2.5-3B-Instruct (base, 4-bit) | 47.67% | — |
-| **+ QLoRA fine-tune (this repo)** | **50.33%** | **+2.67 pp** |
+| Metric | Base | Fine-tuned | Δ | Significance |
+|--------|-----:|-----------:|--:|--------------|
+| Entity micro-F1 | 0.330 | **0.840** | **+0.510** | bootstrap 95% CI [+0.485, +0.537], **p≈0** |
+| Exact-set match | 0.205 | **0.821** | **+0.615** | McNemar χ²=861, **p≈0** |
+| JSON-valid rate | 0.956 | **1.000** | +0.044 | — |
 
-**Parse rate: 1.00 for both** — every generation yielded a parseable answer
-letter, so the accuracy delta reflects genuine answer quality, not formatting
-luck. A few points from one epoch of QLoRA is the realistic, honest outcome on
-USMLE-level questions; the point of the project is the *methodology* (see below),
-and the harness scales straight to more epochs / the full train split / a larger
-base model for a bigger gain.
+**What it learned (from qualitative review):** to exclude drugs (`anorexigens`
+→ `[]`), fix entity boundaries, and normalize casing — i.e. the dataset's
+genuine annotation conventions, not metric-gaming.
 
----
+### Validation
 
-## Quickstart
+- **Leakage:** only 13/5,724 test sentences appear in train (0.2%), all trivial
+  fragments (`"case report ."`) with no entities → the held-out test is clean.
+- **Overfitting:** fine-tuned F1 is **0.97 on trained-on examples vs 0.84 on
+  test** — a 0.13 gap. It generalizes strongly, with *mild* overfitting; the
+  1-epoch pilot reached 0.82 test F1 with less overfit, so **1 epoch is the
+  sweet spot** (2 epochs mostly raised train F1).
+- **Significance is paired** (same sentences, both models) — McNemar/bootstrap,
+  not an unpaired CI.
 
-### Option A — Google Colab (recommended)
+### Honest scope
 
-1. Open [`notebooks/finetune_medical_qlora.ipynb`](notebooks/finetune_medical_qlora.ipynb) in Colab.
-2. Set the runtime to **GPU** (T4 is enough).
-3. Run all cells. The notebook installs deps, runs a baseline eval, fine-tunes,
-   re-evaluates, and shows demo predictions.
-
-> **Mistral is a gated model.** Accept the license at
-> [huggingface.co/mistralai/Mistral-7B-Instruct-v0.3](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3)
-> and paste an HF token when prompted. To skip gating entirely, set
-> `BASE_MODEL=Qwen/Qwen2.5-3B-Instruct` (Apache-2.0, ungated).
-
-### Option B — Local
-
-```bash
-pip install -r requirements.txt
-
-# Train (8 GB GPU: use the smaller, ungated model)
-export BASE_MODEL=Qwen/Qwen2.5-3B-Instruct
-python -m src.train
-
-# Evaluate base vs fine-tuned
-python -m src.evaluate --adapter outputs/medqa-qlora/adapter
-
-# Ask a single question
-python -m src.inference --adapter outputs/medqa-qlora/adapter \
-  --question "A 22-year-old presents with..." \
-  --options "A) Option one B) Option two C) Option three D) Option four"
-```
+The test set shares the training corpus's annotation conventions, so 0.84 F1 is
+**in-distribution** disease extraction ("learned *this* task well"), not a claim
+of universal medical NER. Cross-dataset robustness is future work.
 
 ---
 
 ## How it works
 
 ```
-raw MedQA row
-  └─ normalize_example()      # → {question, options{A..D}, answer_letter}
-       └─ build_messages()    # → chat-templated [system, user, (assistant)]
-            ├─ training:  prompt + gold answer, prompt tokens masked to -100
-            └─ eval:      prompt only → model.generate() → extract_answer_letter()
+{tokens, BIO tags}                      # rjac disease-NER dataset
+  └─ bio_to_entities()                  # -> ["heart failure", ...]   (tested)
+       └─ build_extraction_prompt()     # "Text: ...\nJSON:"  + {"diseases":[...]}
+            ├─ train: prompt masked to -100, loss only on the JSON target
+            └─ eval:  generate -> parse_diseases() -> micro-F1 / exact-match
 ```
 
-- **Quantization:** `bitsandbytes` 4-bit NF4 with double quantization; compute
-  dtype auto-selects bf16 (Ampere+) or fp16 (Colab T4).
-- **Adapters:** LoRA on all attention + MLP projections (`r=16`, `alpha=32`).
-- **Optimizer:** `paged_adamw_8bit` + gradient checkpointing to fit in memory.
-- **Eval is honest:** greedy/deterministic, and reports a **parse rate** so a
-  high "accuracy" can't hide behind unparseable generations.
-
-Everything is driven by [`src/config.py`](src/config.py) and overridable via
-environment variables (no code edits needed for a different model/dataset).
+- **Quantization:** bitsandbytes 4-bit NF4 + double quant (compute dtype auto:
+  bf16 on Ampere+, fp16 on a T4).
+- **Adapters:** LoRA on attention + MLP projections (`r=16`, `α=32`).
+- **Base model:** non-instruct, so prompts are plain text (no chat template) —
+  this is *why* there's headroom for SFT.
+- **Fast eval:** fp16 with the adapter merged (4-bit generation is slow).
 
 ---
+
+## Reproduce
+
+The full experiment runs headlessly on a free **Kaggle T4** via
+[`kaggle/run_cot.py`](kaggle/run_cot.py) (orchestration) launched by the thin
+loader [`kaggle/run_kaggle.py`](kaggle/run_kaggle.py). Locally:
+
+```bash
+pip install -r requirements.txt
+
+# Train + evaluate the extraction model (set PILOT=1 in the script for a smoke test)
+TASK=extraction BASE_MODEL=Qwen/Qwen2.5-1.5B USE_CHAT_TEMPLATE=0 \
+DATASET_NAME=rjac/biobert-ner-diseases-dataset python -m src.train
+```
+
+Everything is driven by [`src/config.py`](src/config.py) (env-overridable).
 
 ## Tests
 
 ```bash
-pytest -q          # 17 GPU-free tests covering formatting + answer parsing
+pytest -q          # 62 GPU-free tests: BIO conversion, JSON parsing, scoring,
+                   # McNemar, bootstrap, prompt formatting
 ```
-
-The pure logic the pipeline depends on (schema normalization, prompt building,
-answer-letter extraction) is unit-tested so it stays correct independent of any
-training run.
-
----
 
 ## Project layout
 
 ```
 src/
-  config.py      # one source of truth, env-overridable
-  data.py        # dataset loading + prompt/answer logic (tested)
-  train.py       # QLoRA training w/ prompt-masked loss
-  evaluate.py    # base-vs-finetuned accuracy benchmark
-  inference.py   # single-question / interactive use
-tests/
-  test_data.py   # GPU-free unit tests
-notebooks/
-  finetune_medical_qlora.ipynb   # Colab end-to-end
+  config.py       # one env-overridable source of truth
+  data.py         # MCQA loaders + prompt formatting (the exploration phase)
+  extraction.py   # the extraction task: BIO->JSON, parse, scoring, paired eval
+  stats.py        # McNemar + bootstrap-F1 significance (tested)
+  train.py        # QLoRA training (MCQA + extraction), prompt-masked loss
+  evaluate.py     # paired base-vs-fine-tuned eval, fp16 fast inference
+tests/            # 62 unit tests (test_data / test_stats / test_extraction)
+kaggle/           # headless T4 runner (loader + orchestration)
+results/          # extraction_results.json (final metrics + examples)
+notebooks/        # Colab notebook from the earlier MCQA exploration
 ```
 
 ## Notes & limitations
 
-- MedQA (USMLE) is hard; a single-epoch QLoRA on a 7B model yields a modest but
-  real gain — the point is the *methodology*, not a SOTA score.
-- This is an educational artifact and **not medical advice**.
-- For a stronger score: more epochs, the full train split, or a larger base
-  model on a bigger GPU.
+- Educational artifact, **not** a clinical tool.
+- Result is in-distribution disease extraction (see scope above).
+- The baseline is zero-shot; a few-shot-prompted base would be a stronger (but
+  the comparison here is fair — identical prompt for both models).

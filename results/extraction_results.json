@@ -1,0 +1,170 @@
+{
+  "mode": "full",
+  "task": "disease structured extraction (text -> JSON)",
+  "base_model": "Qwen/Qwen2.5-1.5B",
+  "dataset": "rjac/biobert-ner-diseases-dataset",
+  "train_samples": 8000,
+  "num_train_epochs": 2.0,
+  "result": {
+    "n": 1500,
+    "examples": [
+      {
+        "text": "Torsade de pointes ventricular tachycardia during low dose intermittent dobutamine treatment in a patient with dilated cardiomyopathy and congestive heart failure .",
+        "gold": [
+          "Torsade de pointes",
+          "ventricular tachycardia",
+          "dilated cardiomyopathy",
+          "congestive heart failure"
+        ],
+        "base_pred": [
+          "Torsade de pointes ventricular tachycardia",
+          "dilated cardiomyopathy",
+          "congestive heart failure"
+        ],
+        "finetuned_pred": [
+          "Torsade de pointes ventricular tachycardia",
+          "dilated cardiomyopathy",
+          "congestive heart failure"
+        ]
+      },
+      {
+        "text": "The authors describe the case of a 56 - year - old woman with chronic , severe heart failure secondary to dilated cardiomyopathy and absence of significant ventricular arrhythmias who developed QT prolongation and torsade de pointes ventricular tachycardia during one cycle of intermittent low dose ( 2 . 5 mcg / kg per min ) dobutamine .",
+        "gold": [
+          "heart failure",
+          "dilated cardiomyopathy",
+          "ventricular arrhythmias",
+          "QT prolongation",
+          "torsade de pointes",
+          "ventricular tachycardia"
+        ],
+        "base_pred": [
+          "dilated cardiomyopathy"
+        ],
+        "finetuned_pred": [
+          "heart failure",
+          "dilated cardiomyopathy",
+          "ventricular arrhythmias",
+          "QT prolongation",
+          "torsade de pointes ventricular tachycardia"
+        ]
+      },
+      {
+        "text": "Risk of transient hyperammonemic encephalopathy in cancer patients who received continuous infusion of 5 - fluorouracil with the complication of dehydration and infection .",
+        "gold": [
+          "hyperammonemic encephalopathy",
+          "cancer",
+          "dehydration",
+          "infection"
+        ],
+        "base_pred": [
+          "Transient hyperammonemic encephalopathy",
+          "Dehydration",
+          "Infection"
+        ],
+        "finetuned_pred": [
+          "hyperammonemic encephalopathy",
+          "cancer",
+          "dehydration",
+          "infection"
+        ]
+      },
+      {
+        "text": "The use of anorexigens was common in both groups .",
+        "gold": [],
+        "base_pred": [
+          "anorexigens"
+        ],
+        "finetuned_pred": []
+      },
+      {
+        "text": "There were 53 major hemorrhages , for an annual rate of 10 . 0 % , including 24 ( 45 . 3 % ) life - threatening and five ( 9 . 4 % ) fatal bleeds .",
+        "gold": [
+          "hemorrhages"
+        ],
+        "base_pred": [],
+        "finetuned_pred": [
+          "hemorrhages",
+          "bleeds"
+        ]
+      },
+      {
+        "text": "The annual stroke rate after initiation of warfarin was 2 . 6 % .",
+        "gold": [
+          "stroke"
+        ],
+        "base_pred": [
+          "stroke"
+        ],
+        "finetuned_pred": [
+          "stroke"
+        ]
+      },
+      {
+        "text": "CONCLUSION : The rate of major hemorrhage was high in this old , frail group , but excluding fatalities , resulted in no long - term sequelae , and the stroke rate on warfarin was low , demonstrating how effective warfarin treatment is .",
+        "gold": [
+          "hemorrhage",
+          "stroke"
+        ],
+        "base_pred": [
+          "major hemorrhage",
+          "stroke"
+        ],
+        "finetuned_pred": [
+          "hemorrhage",
+          "stroke"
+        ]
+      },
+      {
+        "text": "Safety of celecoxib in patients with adverse skin reactions to acetaminophen ( paracetamol ) and nimesulide associated or not with common non - steroidal anti - inflammatory drugs .",
+        "gold": [
+          "skin reactions"
+        ],
+        "base_pred": [
+          "Acetaminophen",
+          "Nimesulide",
+          "Celecoxib",
+          "Paracetamol",
+          "Non-steroidal anti-inflammatory drugs"
+        ],
+        "finetuned_pred": [
+          "skin reactions"
+        ]
+      }
+    ],
+    "base_micro_f1": 0.3295,
+    "finetuned_micro_f1": 0.84,
+    "f1_significance": {
+      "f1_base": 0.3295,
+      "f1_ft": 0.84,
+      "f1_delta": 0.5105,
+      "ci_low": 0.4847,
+      "ci_high": 0.5368,
+      "p_value": 0.0,
+      "significant_05": true
+    },
+    "base_json_valid_rate": 0.956,
+    "finetuned_json_valid_rate": 1.0,
+    "base_exact_match": 0.2053,
+    "finetuned_exact_match": 0.8207,
+    "exact_match_significance": {
+      "n": 1500,
+      "base_correct": 308,
+      "ft_correct": 1231,
+      "base_accuracy": 0.2053,
+      "ft_accuracy": 0.8207,
+      "accuracy_delta": 0.6153,
+      "ft_right_base_wrong": 955,
+      "ft_wrong_base_right": 32,
+      "mcnemar_statistic": 861.2806,
+      "p_value": 0.0,
+      "delta_ci_low": 0.5886,
+      "delta_ci_high": 0.6421,
+      "significant_05": true
+    }
+  },
+  "overfitting_check": {
+    "finetuned_train_f1": 0.9701,
+    "finetuned_test_f1": 0.84,
+    "generalization_gap": 0.1301
+  }
+}
