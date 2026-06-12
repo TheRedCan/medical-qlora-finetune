@@ -227,10 +227,21 @@ def test_build_cot_target_without_explanation_is_just_answer_line():
 
 def test_build_messages_cot_uses_cot_instruction_and_reasoning():
     msgs = build_messages(normalize_medmcqa(RAW_MEDMCQA), include_answer=True, cot=True)
-    assert "step by step" in msgs[1]["content"].lower()
+    user = msgs[1]["content"].lower()
+    assert "reasoning" in user and "the answer is" in user
     # assistant target carries reasoning then the answer line
     assert "collagen" in msgs[-1]["content"]
     assert msgs[-1]["content"].strip().endswith("The answer is (B) Vitamin C")
+
+
+def test_build_cot_target_truncates_long_reasoning():
+    long_exp = " ".join(f"Sentence number {i} explaining things." for i in range(20))
+    target = build_cot_target(long_exp, "B", "Vitamin C")
+    reasoning = target.split("\n\n")[0]
+    # only the first few sentences are kept, under the char cap
+    assert reasoning.count(".") <= 3
+    assert len(reasoning) <= 400
+    assert target.strip().endswith("The answer is (B) Vitamin C")
 
 
 def test_extract_answer_letter_takes_last_in_cot():

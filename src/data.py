@@ -30,9 +30,15 @@ COT_SYSTEM_PROMPT = (
 )
 
 COT_INSTRUCTION = (
-    "Think step by step, then finish with a line in the exact form "
-    '"The answer is (X)" where X is the correct option letter.'
+    "Briefly explain your reasoning in 2-4 sentences, then write a final "
+    'line in the exact form "The answer is (X)" where X is the correct '
+    "option letter."
 )
+
+# Keep CoT targets concise so the model learns to reach its answer within a
+# small generation budget (long targets -> slow eval + truncated answers).
+COT_MAX_SENTENCES = 3
+COT_MAX_CHARS = 400
 
 
 def normalize_medmcqa(example: Dict) -> Dict:
@@ -141,9 +147,22 @@ def clean_explanation(explanation: str) -> str:
     return text.strip()
 
 
+def _truncate_reasoning(text: str, max_sentences: int = COT_MAX_SENTENCES,
+                        max_chars: int = COT_MAX_CHARS) -> str:
+    """Keep CoT reasoning short: first few sentences, hard char cap."""
+    text = (text or "").strip()
+    if not text:
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    out = " ".join(sentences[:max_sentences]).strip()
+    if len(out) > max_chars:
+        out = out[:max_chars].rsplit(" ", 1)[0].rstrip()
+    return out
+
+
 def build_cot_target(explanation: str, answer_letter: str, answer_text: str) -> str:
-    """Gold CoT completion: cleaned reasoning then the canonical answer line."""
-    reasoning = clean_explanation(explanation)
+    """Gold CoT completion: concise reasoning then the canonical answer line."""
+    reasoning = _truncate_reasoning(clean_explanation(explanation))
     answer_line = f"The answer is ({answer_letter}) {answer_text}".strip()
     return f"{reasoning}\n\n{answer_line}".strip() if reasoning else answer_line
 

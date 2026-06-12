@@ -33,10 +33,10 @@ os.environ["DATASET_NAME"] = "openlifescienceai/medmcqa"
 os.environ["EVAL_IN_FP16"] = "1"          # fast eval (big win, separate phase)
 os.environ["GRAD_CHECKPOINT"] = "1"       # memory-safe training (proven config)
 os.environ["MAX_SEQ_LENGTH"] = "768"      # MedMCQA CoT fits; faster than 1024
-os.environ["EVAL_BATCH_SIZE"] = "12"
-# Enough room for the *base* model's verbose CoT to reach its answer line;
-# at 200 it was truncated -> unparseable -> unfairly scored wrong.
-os.environ["MAX_NEW_TOKENS"] = "512"
+os.environ["EVAL_BATCH_SIZE"] = "16"
+# Brief-CoT instruction + concise targets keep generations short, so 256 is
+# enough for both models to reach the answer line without truncation.
+os.environ["MAX_NEW_TOKENS"] = "256"
 os.environ["OUTPUT_DIR"] = os.path.join(WORK, "outputs", "medmcqa-cot-qlora")
 if PILOT:
     os.environ["MAX_TRAIN_SAMPLES"] = "400"
