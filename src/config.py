@@ -48,6 +48,11 @@ class Config:
     # prompt the model to think step by step at eval.
     use_cot: bool = field(default_factory=lambda: _env("USE_COT", "1") == "1")
 
+    # Instruct models use their chat template; base (non-instruct) models have
+    # none, so we render a plain-text prompt instead. Set USE_CHAT_TEMPLATE=0
+    # for base models.
+    use_chat_template: bool = field(default_factory=lambda: _env("USE_CHAT_TEMPLATE", "1") == "1")
+
     # --- LoRA / QLoRA ----------------------------------------------------
     lora_r: int = field(default_factory=lambda: _env_int("LORA_R", 16))
     lora_alpha: int = field(default_factory=lambda: _env_int("LORA_ALPHA", 32))

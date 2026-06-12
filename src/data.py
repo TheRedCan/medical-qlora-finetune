@@ -197,6 +197,26 @@ def build_messages(example: Dict, include_answer: bool, cot: bool = False) -> Li
     return messages
 
 
+def build_plain_prompt(example: Dict, include_answer: bool, cot: bool = False) -> str:
+    """Plain-text prompt for *base* (non-instruct) models, which have no chat
+    template. Same content as the chat messages, flattened, ending in
+    "Answer:" so the model continues with the answer. With
+    ``include_answer=True`` the gold completion is appended (for training)."""
+    norm = example if "answer_letter" in example and "options" in example else normalize_example(example)
+    system = COT_SYSTEM_PROMPT if cot else SYSTEM_PROMPT
+    qblock = (build_cot_question_block if cot else build_question_block)(
+        norm["question"], norm["options"]
+    )
+    prompt = f"{system}\n\n{qblock}\n\nAnswer:"
+    if include_answer:
+        target = (
+            build_cot_target(norm.get("explanation", ""), norm["answer_letter"], norm["answer_text"])
+            if cot else build_target(norm["answer_letter"], norm["answer_text"])
+        )
+        prompt = f"{prompt} {target}"
+    return prompt
+
+
 def merge_system_into_user(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """Fold any system message into the following user turn.
 

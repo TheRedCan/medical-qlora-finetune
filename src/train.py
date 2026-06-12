@@ -16,7 +16,7 @@ import os
 from typing import Dict, List
 
 from .config import Config, CONFIG
-from .data import apply_chat_template, build_messages, load_medqa
+from .data import apply_chat_template, build_messages, build_plain_prompt, load_medqa
 
 
 def _compute_dtype():
@@ -69,15 +69,20 @@ def tokenize_with_masking(example: Dict, tokenizer, config: Config) -> Dict:
     template, then mask everything up to the answer so loss is computed on
     the completion only.
     """
-    prompt_messages = build_messages(example, include_answer=False, cot=config.use_cot)
-    full_messages = build_messages(example, include_answer=True, cot=config.use_cot)
-
-    prompt_ids = apply_chat_template(
-        tokenizer, prompt_messages, tokenize=True, add_generation_prompt=True
-    )
-    full_ids = apply_chat_template(
-        tokenizer, full_messages, tokenize=True, add_generation_prompt=False
-    )
+    if config.use_chat_template:
+        prompt_ids = apply_chat_template(
+            tokenizer, build_messages(example, include_answer=False, cot=config.use_cot),
+            tokenize=True, add_generation_prompt=True,
+        )
+        full_ids = apply_chat_template(
+            tokenizer, build_messages(example, include_answer=True, cot=config.use_cot),
+            tokenize=True, add_generation_prompt=False,
+        )
+    else:  # base model: plain-text prompt, tokenize directly
+        prompt_str = build_plain_prompt(example, include_answer=False, cot=config.use_cot)
+        full_str = build_plain_prompt(example, include_answer=True, cot=config.use_cot)
+        prompt_ids = tokenizer(prompt_str, add_special_tokens=True)["input_ids"]
+        full_ids = tokenizer(full_str, add_special_tokens=True)["input_ids"]
 
     # Append EOS so the model learns to stop.
     if tokenizer.eos_token_id is not None and full_ids[-1] != tokenizer.eos_token_id:

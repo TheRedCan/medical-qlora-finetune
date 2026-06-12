@@ -19,7 +19,7 @@ import json
 from typing import Dict, List, Optional
 
 from .config import Config, CONFIG
-from .data import apply_chat_template, build_messages, extract_answer_letter
+from .data import apply_chat_template, build_messages, build_plain_prompt, extract_answer_letter
 from .stats import mcnemar
 from .train import load_base_model, load_tokenizer, _subset, _compute_dtype
 
@@ -101,13 +101,16 @@ def evaluate_model(model, tokenizer, dataset, config: Config, batch_size: Option
 
     for start in range(0, len(dataset), batch_size):
         batch = dataset.select(range(start, min(start + batch_size, len(dataset))))
-        prompts = [
-            apply_chat_template(
-                tokenizer, build_messages(ex, include_answer=False, cot=config.use_cot),
-                tokenize=False, add_generation_prompt=True,
-            )
-            for ex in batch
-        ]
+        if config.use_chat_template:
+            prompts = [
+                apply_chat_template(
+                    tokenizer, build_messages(ex, include_answer=False, cot=config.use_cot),
+                    tokenize=False, add_generation_prompt=True,
+                )
+                for ex in batch
+            ]
+        else:  # base model: plain-text prompt
+            prompts = [build_plain_prompt(ex, include_answer=False, cot=config.use_cot) for ex in batch]
         generations = _generate_batch(model, tokenizer, prompts, config)
         for ex, gen in zip(batch, generations):
             pred = extract_answer_letter(gen)

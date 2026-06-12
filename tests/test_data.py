@@ -14,6 +14,7 @@ from src.data import (  # noqa: E402
     apply_chat_template,
     build_cot_target,
     build_messages,
+    build_plain_prompt,
     build_question_block,
     build_target,
     clean_explanation,
@@ -242,6 +243,19 @@ def test_build_cot_target_truncates_long_reasoning():
     assert reasoning.count(".") <= 3
     assert len(reasoning) <= 400
     assert target.strip().endswith("The answer is (B) Vitamin C")
+
+
+def test_build_plain_prompt_for_base_model():
+    ex = normalize_medmcqa(RAW_MEDMCQA)
+    # generation prompt: no answer, ends with "Answer:"
+    p = build_plain_prompt(ex, include_answer=False, cot=False)
+    assert p.rstrip().endswith("Answer:")
+    assert "(A) Vitamin A" in p and "(B) Vitamin C" in p
+    assert "<|im_start|>" not in p  # plain text, no chat markup
+    # training prompt: gold answer appended after "Answer:"
+    full = build_plain_prompt(ex, include_answer=True, cot=False)
+    assert full.startswith(p)
+    assert full.strip().endswith("The answer is (B) Vitamin C")
 
 
 def test_extract_answer_letter_takes_last_in_cot():
