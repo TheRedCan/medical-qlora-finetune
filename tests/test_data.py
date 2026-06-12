@@ -12,12 +12,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.data import (  # noqa: E402
     LETTERS,
     apply_chat_template,
+    build_cot_target,
     build_messages,
     build_question_block,
     build_target,
+    clean_explanation,
     extract_answer_letter,
     merge_system_into_user,
     normalize_example,
+    normalize_medmcqa,
 )
 
 RAW_DICT_EXAMPLE = {
@@ -173,3 +176,64 @@ def test_apply_chat_template_passes_string_through_when_not_tokenizing():
     out = apply_chat_template(tok, [{"role": "user", "content": "Q"}],
                               tokenize=False, add_generation_prompt=True)
     assert out == "RENDERED_PROMPT"
+
+
+# ---- MedMCQA normalization (0-indexed cop) ----------------------------
+
+RAW_MEDMCQA = {
+    "question": "Scurvy is caused by deficiency of?",
+    "opa": "Vitamin A", "opb": "Vitamin C", "opc": "Vitamin D", "opd": "Vitamin K",
+    "cop": 1,  # 0-indexed -> B
+    "exp": "Ans-b. Vitamin C deficiency causes scurvy via impaired collagen synthesis.",
+    "choice_type": "single",
+}
+
+
+def test_normalize_medmcqa_cop_is_zero_indexed():
+    norm = normalize_medmcqa(RAW_MEDMCQA)
+    assert norm["answer_letter"] == "B"          # cop=1 -> B, NOT C
+    assert norm["answer_text"] == "Vitamin C"
+    assert norm["options"]["A"] == "Vitamin A"
+    assert norm["choice_type"] == "single"
+    assert "collagen" in norm["explanation"]
+
+
+def test_normalize_medmcqa_cop_zero_is_A():
+    ex = dict(RAW_MEDMCQA, cop=0)
+    assert normalize_medmcqa(ex)["answer_letter"] == "A"
+
+
+def test_normalize_medmcqa_bad_cop_returns_none():
+    ex = dict(RAW_MEDMCQA, cop=None)
+    assert normalize_medmcqa(ex)["answer_letter"] is None
+
+
+# ---- CoT target building + explanation cleaning -----------------------
+
+def test_clean_explanation_strips_leading_answer_prefix():
+    assert clean_explanation("Ans-b. Vitamin C is correct.").lower().startswith("vitamin c")
+    assert clean_explanation("Answer: C - because reasons").lower().startswith("because")
+
+
+def test_build_cot_target_appends_canonical_answer_line():
+    target = build_cot_target("Vitamin C prevents scurvy.", "B", "Vitamin C")
+    assert target.startswith("Vitamin C prevents scurvy.")
+    assert target.strip().endswith("The answer is (B) Vitamin C")
+
+
+def test_build_cot_target_without_explanation_is_just_answer_line():
+    assert build_cot_target("", "B", "Vitamin C") == "The answer is (B) Vitamin C"
+
+
+def test_build_messages_cot_uses_cot_instruction_and_reasoning():
+    msgs = build_messages(normalize_medmcqa(RAW_MEDMCQA), include_answer=True, cot=True)
+    assert "step by step" in msgs[1]["content"].lower()
+    # assistant target carries reasoning then the answer line
+    assert "collagen" in msgs[-1]["content"]
+    assert msgs[-1]["content"].strip().endswith("The answer is (B) Vitamin C")
+
+
+def test_extract_answer_letter_takes_last_in_cot():
+    cot = ("Option A is unlikely. The answer is (B) seems plausible but on "
+           "reflection, the answer is (C) potassium.")
+    assert extract_answer_letter(cot) == "C"

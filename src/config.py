@@ -35,13 +35,18 @@ class Config:
     base_model: str = field(default_factory=lambda: _env("BASE_MODEL", "mistralai/Mistral-7B-Instruct-v0.3"))
 
     # --- Dataset ---------------------------------------------------------
-    # MedQA (USMLE) with 4 answer options -> clean exact-match accuracy.
-    dataset_name: str = field(default_factory=lambda: _env("DATASET_NAME", "GBaker/MedQA-USMLE-4-options"))
+    # Training set. MedMCQA ships an `exp` rationale we turn into CoT targets.
+    dataset_name: str = field(default_factory=lambda: _env("DATASET_NAME", "openlifescienceai/medmcqa"))
     # Cap examples so a free-tier T4 finishes in a sensible time. Set to 0
     # (or a negative number) to use the full split.
-    max_train_samples: int = field(default_factory=lambda: _env_int("MAX_TRAIN_SAMPLES", 4000))
-    max_eval_samples: int = field(default_factory=lambda: _env_int("MAX_EVAL_SAMPLES", 300))
+    max_train_samples: int = field(default_factory=lambda: _env_int("MAX_TRAIN_SAMPLES", 8000))
+    max_eval_samples: int = field(default_factory=lambda: _env_int("MAX_EVAL_SAMPLES", 1000))
     max_seq_length: int = field(default_factory=lambda: _env_int("MAX_SEQ_LENGTH", 1024))
+
+    # --- Chain-of-thought ------------------------------------------------
+    # When True, train on reasoning targets (explanation -> answer line) and
+    # prompt the model to think step by step at eval.
+    use_cot: bool = field(default_factory=lambda: _env("USE_COT", "1") == "1")
 
     # --- LoRA / QLoRA ----------------------------------------------------
     lora_r: int = field(default_factory=lambda: _env_int("LORA_R", 16))
@@ -64,11 +69,19 @@ class Config:
     warmup_ratio: float = field(default_factory=lambda: _env_float("WARMUP_RATIO", 0.03))
     weight_decay: float = field(default_factory=lambda: _env_float("WEIGHT_DECAY", 0.0))
     logging_steps: int = field(default_factory=lambda: _env_int("LOGGING_STEPS", 10))
-    save_steps: int = field(default_factory=lambda: _env_int("SAVE_STEPS", 200))
+    save_steps: int = field(default_factory=lambda: _env_int("SAVE_STEPS", 500))
     seed: int = field(default_factory=lambda: _env_int("SEED", 42))
+    # Gradient checkpointing trades compute for memory. Disabling it is much
+    # faster on a T4 when the (small, 4-bit) model already fits.
+    gradient_checkpointing: bool = field(default_factory=lambda: _env("GRAD_CHECKPOINT", "0") == "1")
 
     # --- Generation (eval / inference) -----------------------------------
-    max_new_tokens: int = field(default_factory=lambda: _env_int("MAX_NEW_TOKENS", 64))
+    # CoT needs room to reason; raise vs. the old answer-only default.
+    max_new_tokens: int = field(default_factory=lambda: _env_int("MAX_NEW_TOKENS", 256))
+    eval_batch_size: int = field(default_factory=lambda: _env_int("EVAL_BATCH_SIZE", 16))
+    # Evaluate in fp16 with the adapter merged: bitsandbytes 4-bit generation
+    # is slow, and a 3B model fits a T4 comfortably in fp16.
+    eval_in_fp16: bool = field(default_factory=lambda: _env("EVAL_IN_FP16", "1") == "1")
 
     def as_dict(self) -> dict:
         return asdict(self)

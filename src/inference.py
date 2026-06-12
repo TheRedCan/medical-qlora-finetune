@@ -29,10 +29,10 @@ def _load(adapter_dir: Optional[str], config: Config):
 def answer_question(model, tokenizer, question: str, options: Dict[str, str], config: Config = CONFIG) -> Dict:
     import torch
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": build_question_block(question, options)},
-    ]
+    from .data import build_messages
+    example = {"question": question, "options": options,
+               "answer_letter": None, "answer_text": ""}
+    messages = build_messages(example, include_answer=False, cot=config.use_cot)
     prompt = apply_chat_template(tokenizer, messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():

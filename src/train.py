@@ -69,8 +69,8 @@ def tokenize_with_masking(example: Dict, tokenizer, config: Config) -> Dict:
     template, then mask everything up to the answer so loss is computed on
     the completion only.
     """
-    prompt_messages = build_messages(example, include_answer=False)
-    full_messages = build_messages(example, include_answer=True)
+    prompt_messages = build_messages(example, include_answer=False, cot=config.use_cot)
+    full_messages = build_messages(example, include_answer=True, cot=config.use_cot)
 
     prompt_ids = apply_chat_template(
         tokenizer, prompt_messages, tokenize=True, add_generation_prompt=True
@@ -116,7 +116,9 @@ class CausalDataCollator:
 def build_lora_model(model, config: Config):
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    model = prepare_model_for_kbit_training(
+        model, use_gradient_checkpointing=config.gradient_checkpointing
+    )
     lora_config = LoraConfig(
         r=config.lora_r,
         lora_alpha=config.lora_alpha,
@@ -136,14 +138,27 @@ def _subset(dataset, n: int):
     return dataset
 
 
+def load_training_split(config: Config):
+    """Load the training split, normalized to the shared schema. MedMCQA is
+    used for CoT (it ships explanations); MedQA otherwise."""
+    from .data import load_medmcqa
+
+    if "medmcqa" in config.dataset_name.lower():
+        ds = load_medmcqa(config.dataset_name, require_exp=config.use_cot)
+        return ds["train"]
+    return load_medqa(config)["train"]
+
+
 def train(config: Config = CONFIG):
     from transformers import Trainer, TrainingArguments
 
     tokenizer = load_tokenizer(config)
 
-    print("Loading + normalizing MedQA ...")
-    ds = load_medqa(config)
-    train_ds = _subset(ds["train"], config.max_train_samples)
+    style = "CoT" if config.use_cot else "direct"
+    print(f"Loading + normalizing training data ({config.dataset_name}, {style}) ...")
+    full_train = load_training_split(config)
+    full_train = full_train.shuffle(seed=config.seed)
+    train_ds = _subset(full_train, config.max_train_samples)
 
     print(f"Tokenizing {len(train_ds)} training examples (prompt-masked) ...")
     tokenized = train_ds.map(
@@ -173,8 +188,8 @@ def train(config: Config = CONFIG):
         optim="paged_adamw_8bit",  # memory-friendly optimizer (QLoRA)
         bf16=_compute_dtype() == torch.bfloat16,
         fp16=_compute_dtype() == torch.float16,
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing=config.gradient_checkpointing,
+        gradient_checkpointing_kwargs={"use_reentrant": False} if config.gradient_checkpointing else None,
         report_to="none",
         seed=config.seed,
     )

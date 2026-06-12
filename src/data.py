@@ -23,6 +23,46 @@ ANSWER_INSTRUCTION = (
     "followed by a one-sentence justification."
 )
 
+# --- Chain-of-thought (CoT) variants ----------------------------------
+COT_SYSTEM_PROMPT = (
+    "You are a medical expert answering multiple-choice questions. Reason "
+    "carefully through the clinical details before deciding."
+)
+
+COT_INSTRUCTION = (
+    "Think step by step, then finish with a line in the exact form "
+    '"The answer is (X)" where X is the correct option letter.'
+)
+
+
+def normalize_medmcqa(example: Dict) -> Dict:
+    """Coerce a raw MedMCQA row into the same schema as MedQA.
+
+    MedMCQA stores options as separate ``opa..opd`` fields and the gold
+    answer as ``cop``, a **0-indexed** integer (0->A, 1->B, ...), verified
+    empirically. It also ships an ``exp`` explanation we use as the CoT
+    rationale. Output schema adds ``explanation`` and ``choice_type``:
+
+        {"question", "options"{A..D}, "answer_letter", "answer_text",
+         "explanation", "choice_type"}
+    """
+    options = {
+        "A": (example.get("opa") or "").strip(),
+        "B": (example.get("opb") or "").strip(),
+        "C": (example.get("opc") or "").strip(),
+        "D": (example.get("opd") or "").strip(),
+    }
+    cop = example.get("cop")
+    answer_letter = LETTERS[cop] if isinstance(cop, int) and 0 <= cop < 4 else None
+    return {
+        "question": (example.get("question") or "").strip(),
+        "options": options,
+        "answer_letter": answer_letter,
+        "answer_text": options.get(answer_letter, "") if answer_letter else "",
+        "explanation": (example.get("exp") or "").strip(),
+        "choice_type": example.get("choice_type", "single"),
+    }
+
 
 def normalize_example(example: Dict) -> Dict:
     """Coerce a raw MedQA row into a stable schema.
@@ -72,26 +112,69 @@ def build_question_block(question: str, options: Dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def build_cot_question_block(question: str, options: Dict[str, str]) -> str:
+    """Question + options + the *chain-of-thought* instruction."""
+    lines = [question, ""]
+    for letter in LETTERS:
+        if letter in options:
+            lines.append(f"({letter}) {options[letter]}")
+    lines.append("")
+    lines.append(COT_INSTRUCTION)
+    return "\n".join(lines)
+
+
 def build_target(answer_letter: str, answer_text: str) -> str:
     """The assistant's gold completion we train the model to produce."""
     return f"The answer is ({answer_letter}) {answer_text}".strip()
 
 
-def build_messages(example: Dict, include_answer: bool) -> List[Dict[str, str]]:
+def clean_explanation(explanation: str) -> str:
+    """Tidy a raw MedMCQA ``exp`` rationale for use as a CoT trace.
+
+    Strips a leading "Ans-a"/"Answer: B"-style prefix (the gold letter is
+    appended separately as the final line) and collapses whitespace.
+    """
+    text = (explanation or "").strip()
+    text = re.sub(r"^\s*(ans(?:wer)?[\s\-:.]*\(?[a-eA-E]\)?[\s\-:.]*)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def build_cot_target(explanation: str, answer_letter: str, answer_text: str) -> str:
+    """Gold CoT completion: cleaned reasoning then the canonical answer line."""
+    reasoning = clean_explanation(explanation)
+    answer_line = f"The answer is ({answer_letter}) {answer_text}".strip()
+    return f"{reasoning}\n\n{answer_line}".strip() if reasoning else answer_line
+
+
+def build_messages(example: Dict, include_answer: bool, cot: bool = False) -> List[Dict[str, str]]:
     """Chat-format messages for a normalized example.
 
     ``include_answer=True`` appends the gold assistant turn (training);
     ``False`` leaves it open for generation (evaluation/inference).
+    ``cot=True`` uses the chain-of-thought system prompt, instruction, and
+    (for training) a reasoning-augmented target built from ``explanation``.
     """
     norm = example if "answer_letter" in example and "options" in example else normalize_example(example)
+    if cot:
+        system = COT_SYSTEM_PROMPT
+        user = build_cot_question_block(norm["question"], norm["options"])
+    else:
+        system = SYSTEM_PROMPT
+        user = build_question_block(norm["question"], norm["options"])
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": build_question_block(norm["question"], norm["options"])},
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
     ]
     if include_answer:
-        messages.append(
-            {"role": "assistant", "content": build_target(norm["answer_letter"], norm["answer_text"])}
-        )
+        if cot:
+            content = build_cot_target(
+                norm.get("explanation", ""), norm["answer_letter"], norm["answer_text"]
+            )
+        else:
+            content = build_target(norm["answer_letter"], norm["answer_text"])
+        messages.append({"role": "assistant", "content": content})
     return messages
 
 
@@ -165,17 +248,20 @@ def extract_answer_letter(text: str) -> Optional[str]:
     """Pull the predicted option letter out of a model generation.
 
     Strategy, in priority order:
-      1. The phrase "answer is (X)" / "answer: X".
-      2. The first standalone A-E letter near the start of the text.
+      1. The phrase "answer is (X)" / "answer: X" — for chain-of-thought
+         output we take the **last** such phrase (the conclusion), so stray
+         "option B is wrong" mentions mid-reasoning don't mislead us.
+      2. The first standalone "(X)" token.
+      3. A leading bare letter, e.g. "C. Because ...".
     Returns an uppercase letter or None if nothing parseable is found.
     """
     if not text:
         return None
 
-    # 1) Explicit "answer is X" pattern.
-    m = re.search(r"answer\s*(?:is|:)?\s*\(?\s*([A-E])\b", text, re.IGNORECASE)
-    if m:
-        return m.group(1).upper()
+    # 1) Explicit "answer is X" pattern — last match wins (CoT conclusion).
+    matches = re.findall(r"answer\s*(?:is|:)?\s*\(?\s*([A-E])\b", text, re.IGNORECASE)
+    if matches:
+        return matches[-1].upper()
 
     # 2) First "(X)" style token.
     m = re.search(r"\(\s*([A-E])\s*\)", text, re.IGNORECASE)
@@ -200,3 +286,30 @@ def load_medqa(config) -> "DatasetDict":  # noqa: F821 - datasets imported lazil
     # Drop any rows we could not assign a gold letter to.
     normalized = normalized.filter(lambda ex: ex["answer_letter"] in LETTERS)
     return normalized
+
+
+def load_medmcqa(dataset_name: str = "openlifescienceai/medmcqa", require_exp: bool = False):
+    """Load MedMCQA and normalize every split to the shared schema.
+
+    ``require_exp=True`` keeps only single-answer rows with a non-empty
+    explanation (for building CoT *training* targets). Eval splits should
+    pass ``require_exp=False`` to keep every labeled question.
+
+    Note: MedMCQA's ``test`` answers are hidden, so use ``validation`` for
+    labeled in-distribution evaluation.
+    """
+    from datasets import load_dataset
+
+    raw = load_dataset(dataset_name)
+    normalized = raw.map(normalize_medmcqa, remove_columns=raw["train"].column_names)
+
+    def keep(ex):
+        if ex["answer_letter"] not in LETTERS:
+            return False
+        if ex.get("choice_type", "single") != "single":
+            return False
+        if require_exp and not ex.get("explanation"):
+            return False
+        return True
+
+    return normalized.filter(keep)
