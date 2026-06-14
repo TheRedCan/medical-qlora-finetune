@@ -86,12 +86,27 @@ genuine annotation conventions, not metric-gaming.
 ### Honest scope
 
 The test set shares the training corpus's annotation conventions, so 0.84 F1 is
-**in-distribution** disease extraction ("learned *this* task well"), not a claim
-of universal medical NER. Cross-dataset robustness is future work.
+primarily **in-distribution**. To probe robustness we also run an
+**out-of-distribution** eval on the **BC5CDR** disease corpus (a different
+dataset), leakage-filtered against training — see *Architecture → Evaluation*
+and `results/`.
 
 ---
 
-## How it works
+## Architecture
+
+### Module map (`src/`)
+
+| Module | Responsibility |
+|--------|----------------|
+| `config.py` | One dataclass, **the single source of truth**; every field overridable by env var, so the same code runs locally and on Kaggle with no edits. |
+| `extraction.py` | The extraction task end-to-end: BIO→entities, JSON prompt/target builders, output parsing, set-based scoring, and the paired evaluator. |
+| `data.py` | MCQA loaders + prompt formatting from the **exploration phase** (kept to document the journey; used only when `TASK=mcqa`). |
+| `train.py` | QLoRA training shared by both tasks — 4-bit load, LoRA attach, **prompt-masked** tokenization, `Trainer` setup. Dispatches tokenization by `config.task`. |
+| `evaluate.py` | Model loading for eval (fast **fp16 merged-adapter** path), batched generation, and the MCQA paired evaluator. |
+| `stats.py` | Significance: **McNemar** (exact + χ²) and **bootstrap F1** — pure, unit-tested, no ML deps. |
+
+### Data flow
 
 ```
 {tokens, BIO tags}                      # rjac disease-NER dataset
@@ -101,20 +116,46 @@ of universal medical NER. Cross-dataset robustness is future work.
             └─ eval:  generate -> parse_diseases() -> micro-F1 / exact-match
 ```
 
+### Modeling
 - **Quantization:** bitsandbytes 4-bit NF4 + double quant (compute dtype auto:
   bf16 on Ampere+, fp16 on a T4).
-- **Adapters:** LoRA on attention + MLP projections (`r=16`, `α=32`).
-- **Base model:** non-instruct, so prompts are plain text (no chat template) —
-  this is *why* there's headroom for SFT.
-- **Fast eval:** fp16 with the adapter merged (4-bit generation is slow).
+- **Adapters:** LoRA on attention + MLP projections (`r=16`, `α=32`); loss
+  **masked to the completion** so we train on the target, not the prompt.
+- **Base model:** non-instruct → plain-text prompts (no chat template). This is
+  *why* there's headroom for SFT; the code auto-selects chat vs plain via
+  `use_chat_template`.
+- **Fast eval:** fp16 with the adapter merged (`merge_and_unload`) — 4-bit
+  generation is slow, and a ≤3B model fits a T4 in fp16.
+
+### Task abstraction
+`config.task ∈ {mcqa, extraction}` selects the data loader, prompt/target
+builders, and evaluator. The MCQA path is the documented exploration; the
+extraction path is the result. Adding a task = one loader + one tokenizer fn +
+one evaluator, no changes to the training loop.
+
+### Two-tier Kaggle execution (why iteration was fast)
+A **thin, stable loader** ([`kaggle/run_kaggle.py`](kaggle/run_kaggle.py)) is the
+only thing pushed to Kaggle: it clones the repo fresh and runs the **orchestration**
+([`kaggle/run_extraction.py`](kaggle/run_extraction.py)). Because the orchestration
+lives in git, experiments iterate via ordinary `git push` — **no kernel re-push**,
+which matters because re-pushing resets the Kaggle accelerator to an
+incompatible P100.
+
+### Evaluation (built for honesty, not just a number)
+- **Paired** base-vs-fine-tuned on identical inputs → McNemar / bootstrap, not
+  unpaired CIs.
+- Three fronts: **in-distribution** test, a **train-vs-test F1 gap**
+  (overfitting diagnostic), and a leakage-filtered **out-of-distribution**
+  BC5CDR set (robustness).
+- A train/test **leakage check** gates the whole thing.
 
 ---
 
 ## Reproduce
 
 The full experiment runs headlessly on a free **Kaggle T4** via
-[`kaggle/run_cot.py`](kaggle/run_cot.py) (orchestration) launched by the thin
-loader [`kaggle/run_kaggle.py`](kaggle/run_kaggle.py). Locally:
+[`kaggle/run_extraction.py`](kaggle/run_extraction.py) (orchestration) launched
+by the thin loader [`kaggle/run_kaggle.py`](kaggle/run_kaggle.py). Locally:
 
 ```bash
 pip install -r requirements.txt
@@ -144,7 +185,9 @@ src/
   train.py        # QLoRA training (MCQA + extraction), prompt-masked loss
   evaluate.py     # paired base-vs-fine-tuned eval, fp16 fast inference
 tests/            # 62 unit tests (test_data / test_stats / test_extraction)
-kaggle/           # headless T4 runner (loader + orchestration)
+kaggle/
+  run_kaggle.py     # thin stable loader (clones repo, runs orchestration)
+  run_extraction.py # the experiment orchestration (in-dist + overfit + OOD)
 results/          # extraction_results.json (final metrics + examples)
 notebooks/        # Colab notebook from the earlier MCQA exploration
 ```

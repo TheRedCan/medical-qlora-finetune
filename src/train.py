@@ -42,7 +42,6 @@ def load_tokenizer(config: Config):
 def load_base_model(config: Config, for_training: bool = True):
     """Load the base model in 4-bit. Used for both training and the
     'before' evaluation, so eval and train see identical quantization."""
-    import torch
     from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
     bnb_config = BitsAndBytesConfig(

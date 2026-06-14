@@ -171,7 +171,7 @@ def _print_summary(name: str, res: Dict):
 
 def run(adapter_dir: str, config: Config = CONFIG) -> Dict:
     """Single-dataset paired eval on the configured dataset's test/validation."""
-    from .data import load_medmcqa, load_medqa, LETTERS  # noqa: F401
+    from .data import load_medmcqa, load_medqa
 
     if "medmcqa" in config.dataset_name.lower():
         split = load_medmcqa(config.dataset_name)["validation"]

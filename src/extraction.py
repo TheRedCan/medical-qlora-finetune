@@ -136,6 +136,43 @@ def load_ner(dataset_name: str = "rjac/biobert-ner-diseases-dataset"):
     return raw.map(normalize_ner_example, remove_columns=raw["train"].column_names)
 
 
+def _norm_sentence(s: str) -> str:
+    return " ".join(s.split()).lower()
+
+
+def load_bc5cdr_disease_ood(exclude_texts=None):
+    """Out-of-distribution eval set: the disease entities from the BC5CDR test
+    split — a *different* corpus from our NCBI-derived training data.
+
+    Loaded via HF's auto-parquet branch (the original is a removed loading
+    script). tner/bc5cdr tag ids verified empirically: 1=B-Chemical,
+    2=B-Disease, 3=I-Disease, 4=I-Chemical -> we keep diseases only.
+
+    ``exclude_texts`` (a set of normalized sentences) drops any rows that also
+    appear in our training corpus, since rjac overlaps ~50% of BC5CDR — this
+    leaves a genuinely held-out OOD set.
+    """
+    from datasets import load_dataset
+
+    raw = load_dataset("tner/bc5cdr", revision="refs/convert/parquet")["test"]
+
+    def to_disease(ex):
+        # remap BC5CDR disease tags onto the shared B/I scheme (1=B, 2=I)
+        tags = [1 if t == 2 else (2 if t == 3 else 0) for t in ex["tags"]]
+        entities = bio_to_entities(ex["tokens"], tags)
+        seen, deduped = set(), []
+        for e in entities:
+            if e.lower() not in seen:
+                seen.add(e.lower())
+                deduped.append(e)
+        return {"text": " ".join(ex["tokens"]), "diseases": deduped}
+
+    ds = raw.map(to_disease, remove_columns=raw.column_names)
+    if exclude_texts:
+        ds = ds.filter(lambda e: _norm_sentence(e["text"]) not in exclude_texts)
+    return ds
+
+
 # --------------------------------------------------------------------------
 # Evaluation (paired base vs fine-tuned)
 # --------------------------------------------------------------------------

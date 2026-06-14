@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, asdict
-from typing import List, Sequence
+from typing import Sequence
 
 
 @dataclass

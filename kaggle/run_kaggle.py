@@ -2,7 +2,7 @@
 
 Deliberately minimal so it almost never changes: it clones the repo fresh,
 installs deps, and hands off to the repo's orchestration script
-(``kaggle/run_cot.py``). All experiment logic lives in that script, so it can
+(``kaggle/run_extraction.py``). All experiment logic lives in that script, so it can
 be iterated via ordinary GitHub pushes WITHOUT re-pushing the kernel (which
 would reset the accelerator to P100 and trigger a wasted run).
 """
@@ -24,5 +24,5 @@ subprocess.run([sys.executable, "-m", "pip", "install", "-q",
                 "transformers>=4.45", "peft>=0.13", "bitsandbytes>=0.43",
                 "accelerate>=0.34", "datasets>=3.0", "sentencepiece>=0.2"], check=True)
 
-subprocess.run([sys.executable, os.path.join(repo_dir, "kaggle", "run_cot.py")],
+subprocess.run([sys.executable, os.path.join(repo_dir, "kaggle", "run_extraction.py")],
                check=True, cwd=repo_dir)

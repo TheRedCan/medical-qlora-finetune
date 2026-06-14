@@ -11,7 +11,7 @@ import argparse
 from typing import Dict, Optional
 
 from .config import Config, CONFIG
-from .data import SYSTEM_PROMPT, apply_chat_template, build_question_block, extract_answer_letter
+from .data import apply_chat_template, extract_answer_letter
 from .train import load_tokenizer
 
 

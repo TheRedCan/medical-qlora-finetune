@@ -280,9 +280,6 @@ def _to_token_id_list(out) -> List[int]:
     return list(out)
 
 
-_LETTER_RE = re.compile(r"\(?\s*([A-E])\s*\)?", re.IGNORECASE)
-
-
 def extract_answer_letter(text: str) -> Optional[str]:
     """Pull the predicted option letter out of a model generation.
 
@@ -315,7 +312,7 @@ def extract_answer_letter(text: str) -> Optional[str]:
     return None
 
 
-def load_medqa(config) -> "DatasetDict":  # noqa: F821 - datasets imported lazily
+def load_medqa(config):
     """Load MedQA and normalize every split. Imports `datasets` lazily so
     importing this module (e.g. for tests) does not require the heavy dep."""
     from datasets import load_dataset
